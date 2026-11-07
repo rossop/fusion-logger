@@ -1,0 +1,13 @@
+{
+	"autodeskProduct":	"Fusion",
+	"type":	"addin",
+	"id":	"b348cea1-ad14-4583-bfd1-c0c3cca45b12",
+	"author":	"rossop",
+	"description":	{
+		"":	"Records anonymised interaction logs for the editability study."
+	},
+	"version":	"0.2.0",
+	"runOnStartup":	true,
+	"supportedOS":	"windows|mac",
+	"editEnabled":	false
+}

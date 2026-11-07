@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+    <head>
+      <meta charset="UTF-8">
+      <title>FusionLogger</title>
+      <style>
+        body { font-family: sans-serif; font-size: 13px; line-height: 1.4; margin: 12px; }
+        label { display: block; margin: 12px 0 4px; }
+        input[type=text] { width: 7em; padding: 4px; font-size: 14px; }
+        button { margin: 12px 8px 0 0; padding: 6px 12px; font-size: 14px; }
+        ul { list-style: none; padding: 0; }
+        .error { color: #b00020; }
+        .scale { display: flex; justify-content: space-between; margin: 6px 0 2px; }
+        .scale label { display: flex; flex-direction: column; align-items: center; margin: 0; }
+        .ends { display: flex; justify-content: space-between; font-size: 12px; }
+        textarea { width: 100%; box-sizing: border-box; min-height: 5em; font: inherit; }
+        .notice { margin-top: 12px; padding: 8px; border-left: 4px solid #555; background: #f2f2f2; }
+        #banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 12px;
+                  border-radius: 4px; background: #b00020; color: #fff; font-size: 15px; font-weight: bold; }
+        #dot { width: 14px; height: 14px; flex: none; border-radius: 50%; background: #fff;
+               animation: blink 2s steps(1) infinite; }
+        /* One flash every two seconds: visible at the edge of vision without pulling attention off the task. */
+        @keyframes blink { 50% { opacity: 0.2; } }
+        @media (prefers-reduced-motion: reduce) { #dot { animation: none; } }
+        /* Amber, not red: the add-in is running but cannot vouch for the log. */
+        #banner.problem { background: #9a5b00; }
+        #healthMessage { margin: 0 0 12px; font-weight: bold; color: #9a5b00; }
+        /* Last, so it beats #banner: a banner shown while idle would falsely claim recording. */
+        .hidden, #banner.hidden { display: none; }
+      </style>
+    </head>
+    <body>
+      <h2>FusionLogger</h2>
+
+      <div id="banner" class="hidden" role="status">
+        <span id="dot" aria-hidden="true"></span>
+        <span id="recordingLabel">Recording <span id="activeCode"></span></span>
+        <span id="problemLabel" class="hidden">Recording problem: tell the researcher</span>
+      </div>
+      <p id="healthMessage" class="hidden" role="alert"></p>
+
+      <div id="consent" class="screen">
+        <h3>Status: Not recording</h3>
+        <p id="previous" class="hidden"></p>
+        <p>Thank you for taking part in this Editability Study. The project measures how the
+          structure of a CAD model affects how easy it is to edit, following the usability study
+          approach in Usability Engineering by Nielsen.</p>
+        <p><b>While recording, this logger saves:</b> which commands you use, what kind of thing you
+          select and its geometry (size and position), which design environment you are in, and the
+          time of each action.</p>
+        <p><b>It does not save:</b> your name or Autodesk account, file names or paths, feature
+          names, typed values, or anything outside Fusion.</p>
+        <p>After each file, the panel asks you two short questions about it. Your answers are saved as you
+          type them, so only write what you are happy to have recorded.</p>
+        <p>Logs are identified only by your participant code. A red banner in this panel blinks for as
+          long as recording is on. You can stop at any time. Full details are in your participant
+          information sheet.</p>
+        <label for="code">Participant code</label>
+        <input type="text" id="code" placeholder="P03" autocomplete="off">
+        <label><input type="checkbox" id="agree"> I have read this and I agree to recording.</label>
+        <button type="button" onclick="startRecording()">Start recording</button>
+        <div id="capture" class="hidden">
+          <h3>Researcher: target capture</h3>
+          <p>Open a document named <i>model</i>-e1, then capture it.</p>
+          <button type="button" onclick="captureTarget()">Capture target</button>
+          <p id="captureResult"></p>
+        </div>
+      </div>
+
+      <!-- Researcher checks only: hidden unless PARTICIPANT_CHECK is on in the add-in. -->
+      <div id="check" class="hidden">
+        <p>When you believe a model is finished, check it. Every click is counted.</p>
+        <button type="button" onclick="checkTarget()">Check this model</button>
+        <p id="checkResult" role="status"></p>
+      </div>
+
+      <div id="recording" class="screen hidden">
+        <p>Fusion is being recorded until you stop it here. Keep this panel open.</p>
+        <p>When you have finished your changes to a file and saved it, answer two questions about it before
+          you move on.</p>
+        <button type="button" onclick="fileDone()">Answer questions about this file</button>
+        <button type="button" onclick="openReview(true)">Stop recording</button>
+        <p>You will get a short checklist first. Recording stays on until you confirm.</p>
+      </div>
+
+      <div id="questions" class="screen hidden">
+        <h3>About <span id="questionsFile"></span></h3>
+        <p>Recording is still on. Time spent on these questions does not count towards your edits.</p>
+        <p id="q1">Overall, how hard was it to make the changes to this model?</p>
+        <div class="scale" role="radiogroup" aria-labelledby="q1">
+          <label><input type="radio" name="difficulty" value="1">1</label>
+          <label><input type="radio" name="difficulty" value="2">2</label>
+          <label><input type="radio" name="difficulty" value="3">3</label>
+          <label><input type="radio" name="difficulty" value="4">4</label>
+          <label><input type="radio" name="difficulty" value="5">5</label>
+          <label><input type="radio" name="difficulty" value="6">6</label>
+          <label><input type="radio" name="difficulty" value="7">7</label>
+        </div>
+        <div class="ends"><span>Very easy</span><span>Very hard</span></div>
+        <label for="note">In one or two sentences: was there anything about how this model was built that affected your changes? If so, where (for example a sketch, feature or plane)? If nothing stood out, write 'nothing'.</label>
+        <textarea id="note"></textarea>
+        <p id="blankWarning" class="hidden" role="alert"></p>
+        <button type="button" id="saveAnswers" onclick="saveAnswers()">Save answers</button>
+        <button type="button" onclick="cancelQuestions()">Back to the file</button>
+      </div>
+
+      <div id="review" class="screen hidden">
+        <h3>Recording is still on</h3>
+        <p>Check these, then stop. A save made after stopping would not be recorded. Time spent here does not
+          count towards your edits.</p>
+        <ul>
+          <li><label><input type="checkbox" name="review" value="edits_attempted"> I have attempted the change on every model I was given.</label></li>
+          <li><label><input type="checkbox" name="review" value="models_saved"> Every model is saved, with no unsaved changes.</label></li>
+          <li><label><input type="checkbox" name="review" value="names_kept"> I kept each model's name and did not use Save As.</label></li>
+        </ul>
+        <p id="reviewUnanswered" class="hidden"></p>
+        <p>You can stop with boxes unticked. Tell the researcher what happened.</p>
+        <button type="button" onclick="finish()">Stop recording now</button>
+        <button type="button" onclick="openReview(false)">Back to editing</button>
+      </div>
+
+      <div id="done" class="screen hidden">
+        <h3>Status: Not recording</h3>
+        <p>Recording has stopped and your log is saved. To record again, press Start recording on the
+          toolbar.</p>
+        <p>Your participant code is <b id="doneCode"></b>.</p>
+        <button type="button" id="questionnaire" class="hidden" onclick="openQuestionnaire()">Open the questionnaire</button>
+        <p id="noQuestionnaire" class="hidden">Tell the researcher that you have finished.</p>
+      </div>
+
+      <p id="error" class="error"></p>
+      <p id="unanswered" class="notice hidden" role="status"></p>
+
+      <script>
+        function send(action, data) {
+          document.getElementById("error").textContent = "";
+          return adsk.fusionSendData(action, JSON.stringify(data)).then((reply) => {
+            const result = JSON.parse(reply);
+            if (result.status === "error") {
+              throw new Error(result.message);
+            }
+            return result;
+          }).catch((problem) => {
+            document.getElementById("error").textContent = problem.message || "That did not work. Tell the researcher.";
+            throw problem;
+          });
+        }
+
+        // The banner follows what Python reports, so it never claims a state the add-in did not confirm.
+        function show(screen) {
+          document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("hidden", s.id !== screen));
+          const recording = screen === "recording" || screen === "review" || screen === "questions";
+          document.getElementById("banner").classList.toggle("hidden", !recording);
+          document.getElementById("check").classList.toggle("hidden", !(recording && participantCheck));
+        }
+
+        let participantCheck = false;
+        let questionsFile = null;
+        let blankConfirmed = false;
+
+        function resetQuestions(file) {
+          questionsFile = file;
+          blankConfirmed = false;
+          document.getElementById("questionsFile").textContent = file;
+          document.querySelectorAll("input[name=difficulty]").forEach((box) => { box.checked = false; });
+          document.getElementById("note").value = "";
+          document.getElementById("blankWarning").classList.add("hidden");
+          document.getElementById("saveAnswers").textContent = "Save answers";
+        }
+
+        function fileDone() {
+          send("file_done", {}).then(showState).catch(() => {});
+        }
+
+        function saveAnswers() {
+          const chosen = document.querySelector("input[name=difficulty]:checked");
+          const note = document.getElementById("note").value;
+          const blanks = [!chosen && "question 1", !note.trim() && "question 2"].filter(Boolean);
+          // Skipping is allowed, but only after being told, so a blank is a choice and not a slip.
+          if (blanks.length && !blankConfirmed) {
+            const warning = document.getElementById("blankWarning");
+            warning.textContent = `You haven't answered ${blanks.join(" or ")}. Answer ${blanks.length > 1 ? "them" : "it"}, or press Save anyway.`;
+            warning.classList.remove("hidden");
+            document.getElementById("saveAnswers").textContent = "Save anyway";
+            blankConfirmed = true;
+            return;
+          }
+          send("file_answers", { difficulty: chosen ? Number(chosen.value) : null, note: note }).then((state) => {
+            questionsFile = null;
+            showState(state);
+          }).catch(() => {});
+        }
+
+        function cancelQuestions() {
+          send("file_cancel", {}).then((state) => {
+            questionsFile = null;
+            showState(state);
+          }).catch(() => {});
+        }
+
+        function showUnanswered(names, screen) {
+          const text = names.length ? `You haven't answered the questions about ${names.join(", ")}.` : "";
+          const notice = document.getElementById("unanswered");
+          // The questions belong to whichever file is open, so an answer for another file needs that file open again.
+          notice.textContent = text ? `${text} To answer, open the file again and press Answer questions about this file.` : "";
+          notice.classList.toggle("hidden", !text || screen === "questions" || screen === "review");
+          const inReview = document.getElementById("reviewUnanswered");
+          inReview.textContent = text ? `${text} You can still answer them: go back to editing, open the file and press Answer questions about this file.` : "";
+          inReview.classList.toggle("hidden", !text);
+        }
+
+        // Set from what the add-in reports: its checks run every 30 seconds while recording.
+        function applyHealth(state) {
+          const problem = state.health === "problem";
+          document.getElementById("banner").classList.toggle("problem", problem);
+          document.getElementById("recordingLabel").classList.toggle("hidden", problem);
+          document.getElementById("problemLabel").classList.toggle("hidden", !problem);
+          const message = document.getElementById("healthMessage");
+          message.textContent = problem ? state.health_message : "";
+          message.classList.toggle("hidden", !problem);
+        }
+
+        function startRecording() {
+          send("consent", {
+            participant_code: document.getElementById("code").value,
+            consent: document.getElementById("agree").checked
+          }).then(showState).catch(() => {});
+        }
+
+        function openReview(open) {
+          send("review", { open: open }).then(showState).catch(() => {});
+        }
+
+        function finish() {
+          const checked = [...document.querySelectorAll("input[name=review]:checked")].map((box) => box.value);
+          send("finish", { checked: checked }).then(showState).catch(() => {});
+        }
+
+        function openQuestionnaire() {
+          send("open_questionnaire", {}).catch(() => {});
+        }
+
+        const CHECK_MESSAGES = {
+          match: "Matches the target. Save it before you move on.",
+          no_match: "Does not match the target yet.",
+          no_target: "No target is set up for this model. Tell the researcher.",
+          unreadable: "This model could not be checked. Tell the researcher."
+        };
+        let checkTimer;
+
+        function checkTarget() {
+          send("check_target", {}).then((reply) => {
+            const line = document.getElementById("checkResult");
+            line.textContent = CHECK_MESSAGES[reply.result];
+            clearTimeout(checkTimer);
+            // A result goes stale as soon as the model changes or another model is opened.
+            checkTimer = setTimeout(() => { line.textContent = ""; }, 6000);
+          }).catch(() => {});
+        }
+
+        function captureTarget() {
+          send("capture_target", {}).then((reply) => {
+            document.getElementById("captureResult").textContent = `Captured ${reply.model}. ${reply.count} targets in the file.`;
+          }).catch(() => {});
+        }
+
+        function showState(state) {
+          if (state.status === "recording") {
+            document.getElementById("activeCode").textContent = state.participant_code;
+            applyHealth(state);
+            participantCheck = !!state.participant_check;
+            const screen = state.review_open ? "review" : state.questions ? "questions" : "recording";
+            // A pushed state must not wipe answers being typed for the same file.
+            if (state.questions && state.questions.file !== questionsFile) { resetQuestions(state.questions.file); }
+            show(screen);
+            showUnanswered(state.unanswered || [], screen);
+          } else if (state.status === "finished") {
+            applyHealth({});
+            showUnanswered([], "done");
+            document.getElementById("doneCode").textContent = state.participant_code;
+            document.getElementById("questionnaire").classList.toggle("hidden", !state.questionnaire_url);
+            document.getElementById("noQuestionnaire").classList.toggle("hidden", !!state.questionnaire_url);
+            show("done");
+          } else {
+            applyHealth({});
+            showUnanswered([], "consent");
+            const previous = document.getElementById("previous");
+            previous.classList.toggle("hidden", !state.previous);
+            if (state.previous) {
+              const how = state.previous.ended === "addin_stop" ? "when Fusion or the add-in closed" : "without a clean stop";
+              previous.textContent = `The last recording ended ${how}, at ${state.previous.ended_at}. If that was you, enter your code and start recording again to carry on. It goes into a new file.`;
+            }
+            document.getElementById("capture").classList.toggle("hidden", !state.capture_enabled);
+            show("consent");
+          }
+        }
+
+        // A reloaded panel must not offer consent while a session is running. Fusion injects adsk after load.
+        function syncWithAddIn() {
+          if (window.adsk && adsk.fusionSendData) {
+            send("status", {}).then(showState).catch(() => {});
+          } else {
+            setTimeout(syncWithAddIn, 200);
+          }
+        }
+        syncWithAddIn();
+
+        window.fusionJavaScriptHandler = {
+          handle: function (action, data) {
+            try {
+              if (action === "health") { applyHealth(JSON.parse(data)); }
+              if (action === "state") { showState(JSON.parse(data)); }
+            } catch (problem) {}
+            return "OK";
+          }
+        };
+      </script>
+    </body>
+</html>
